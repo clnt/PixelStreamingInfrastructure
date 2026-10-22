@@ -33,15 +33,18 @@ function reverseVideoEncodings(transport) {
     transport.produce = async (options) => {
         const rtpParameters = options && options.rtpParameters;
         const encodings = rtpParameters && rtpParameters.encodings;
-        const hasRtx = rtpParameters && (rtpParameters.codecs || []).some(c => /\/rtx$/i.test(c.mimeType));
+        const hasRtx = rtpParameters && (rtpParameters.codecs || []).some((c) => /\/rtx$/i.test(c.mimeType));
         let reversed = false;
         if (options.kind === 'video' && Array.isArray(encodings) && encodings.length > 1) {
             if (hasRtx) {
                 rtpParameters.encodings = [...encodings].reverse();
                 reversed = true;
-                console.log('Simulcast layers given to mediasoup smallest first: %s', rtpParameters.encodings.map(e => e.rid || e.ssrc).join(','));
+                console.log(
+                    'Simulcast layers given to mediasoup smallest first: %s',
+                    rtpParameters.encodings.map((e) => e.rid || e.ssrc).join(',')
+                );
             } else {
-                console.log('Simulcast layers left in the streamer\'s order: the offer has no RTX');
+                console.log("Simulcast layers left in the streamer's order: the offer has no RTX");
             }
         }
         const producer = await produce(options);
@@ -55,10 +58,15 @@ function reverseVideoEncodings(transport) {
 
 // The frontend's spatial layer (0 = full size) as mediasoup's index for this consumer.
 function toMediasoupSpatialLayer(consumer, spatialLayer) {
-    if (!reversedProducers.has(consumer.producerId) || consumer.kind !== 'video' || consumer.type !== 'simulcast' || !streamer) {
+    if (
+        !reversedProducers.has(consumer.producerId) ||
+        consumer.kind !== 'video' ||
+        consumer.type !== 'simulcast' ||
+        !streamer
+    ) {
         return spatialLayer;
     }
-    const producer = streamer.producers.find(p => p.id === consumer.producerId);
+    const producer = streamer.producers.find((p) => p.id === consumer.producerId);
     const count = producer ? (producer.rtpParameters.encodings || []).length : 0;
     return count > 1 ? Math.min(Math.max(count - 1 - spatialLayer, 0), count - 1) : spatialLayer;
 }
@@ -503,7 +511,10 @@ function onLayerPreference(msg) {
     const peer = peers.get(`${msg.playerId}`);
     if (peer) {
         for (const consumer of peer.consumers) {
-            consumer.setPreferredLayers({ spatialLayer: toMediasoupSpatialLayer(consumer, msg.spatialLayer), temporalLayer: msg.temporalLayer });
+            consumer.setPreferredLayers({
+                spatialLayer: toMediasoupSpatialLayer(consumer, msg.spatialLayer),
+                temporalLayer: msg.temporalLayer
+            });
         }
     }
 }
