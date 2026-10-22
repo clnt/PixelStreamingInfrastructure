@@ -88,8 +88,9 @@ pixelStreaming.addEventListener('webRtcConnected', () => {
   Unreal (no RTX) the SFU keeps Epic's order too.
 - Other pages are unaffected, and Unreal keeps encoding every layer for them.
 
-Testing: a 20 min run and a 3 h run with one page capped at `Medium` among viewers on `High` are in progress; results
-will be added here.
+Tested in a 20 min and a 3 h run (see "Stress runs" below): the capped page received 1440p 99% and 1080p 1% of the
+time and never 4K, while the other viewers, on `High`, still received 4K.
+
 ## Tests
 
 Rig: RTX 3090, driver 610.88, Windows 11, UE 5.8.3 packaged Win64 Development, a 4K stream at 30 fps (H264), this SFU
@@ -120,7 +121,29 @@ This `sfu_server.js`, run as is:
 Layer requests from the frontend still land on the right size (High → 4K, Medium → 1440p, Low → 1080p), in a median
 0.6–0.8 s. No run had a GPU fault, an encoder error or memory growth.
 
-[Longer runs with frequent viewer bandwidth changes are in progress; results will be added here.]
+### Stress runs (frequent bandwidth changes)
+
+This `sfu_server.js` exactly as published, with Unreal from the branch above, 3840×2160 at 30 fps, 4K / 1440p / 1080p
+layers. Four viewers through the SFU, each replaced every 15–30 s; the controller page (also through the SFU) sends a
+command every 15–22 s; a viewer asks for another layer every 15 s; and **every 8 s one viewer's bandwidth cap at the
+SFU changes** (8, 12, 18, 25 or 40 Mbps, or none; mediasoup's `setMaxOutgoingBitrate`, applied by a test wrapper
+around the unchanged script).
+
+| Run | Load | Video gaps ≥ 1 s (≥ 3 s) | Viewers received | Layer requests |
+|---|---|---|---|---|
+| 60 min | 144 viewer joins, 449 bandwidth changes, 881 layer changes | 1 (0) | 4K 53%, 1440p 30%, 1080p 17% | median 0.7 s, slowest 11.6 s |
+| 20 min, controller page capped at `Medium` | 51 joins, 150 bandwidth changes, 306 layer changes | 0 (0) | Capped page: 1440p 99%, 1080p 1%, never 4K. Others: 4K 48%, 1440p 30%, 1080p 22% | median 0.7 s, slowest 9.4 s |
+| 3 h, controller page capped at `Medium` | 419 joins, 1,349 bandwidth changes, 2,525 layer changes | 13 (1, of 3 s) | Capped page: 1440p 99%, 1080p 1%, never 4K. Others: 4K 45%, 1440p 33%, 1080p 22% | median 0.7 s, slowest 10.5 s |
+
+- No GPU fault, encoder error or command error in 4 h 22 min. Consumers that briefly started with no layer: 8 in 149
+  joins (60 min), 23 in 429 (3 h).
+- For comparison, Epic's order with the same Unreal (3 viewers, no bandwidth changes) had 32 gaps, 9 of them ≥ 3 s, in
+  30 minutes.
+- 7 of the 3 h run's 13 gaps came at two moments when several viewers paused together for 1–2 s while Unreal kept
+  encoding every layer. The cause is downstream of Unreal (the SFU, or the test PC, where all the viewers run) and
+  isn't pinned down.
+- The SFU process (Node plus the mediasoup worker) used a median 17% of one CPU core over the 3 h (max 40%), with
+  4–5 consumers.
 
 ## Applying it elsewhere
 
