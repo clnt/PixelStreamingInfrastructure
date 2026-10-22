@@ -12,6 +12,7 @@ Configuration is handled through the single config.js file.
 | SFUId | String | 'SFU' | The name this peer will be given that will then be displayed in the streamer list. Peers wishing to receive from this SFU should subscribe to this ID. |
 | subscribeStreamerId | String | 'DefaultStreamer' | This is the name of the streamer that this SFU should subscribe to and re-stream. |
 | retrySubscribeDelaySecs | Number | 10 | If subscribing to the given streamer fails, wait this many seconds before trying again. |
+| reverseSimulcastLayers | Boolean | true | Hand a simulcast streamer's video encodings to mediasoup smallest first (the order mediasoup expects; Unreal sends them full size first) and map peers' layer preferences to match. Only applies when the streamer's offer includes RTX. Also `--reverseSimulcastLayers=false` on the command line. See [SFU-REVERSE-SIMULCAST-LAYERS.md](../SFU-REVERSE-SIMULCAST-LAYERS.md). |
 | mediasoup | Object | | Mediasoup-related configuration options. See below. |
 
 ### Mediasoup related configuration options.

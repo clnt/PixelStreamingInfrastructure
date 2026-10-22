@@ -8,6 +8,61 @@ if (!config.retrySubscribeDelaySecs) {
     config.retrySubscribeDelaySecs = 10;
 }
 
+// Unreal offers its simulcast layers full size first (rid simulcast0 = full size), but mediasoup takes encoding 0 as
+// the smallest: it only gives a viewer a layer once encoding 0 fits that viewer's bandwidth estimate, and treats the
+// preferred layer as the highest index allowed. With Unreal's order, every viewer then needs the full-size layer's
+// bitrate before receiving anything, and a viewer on "High" (preference 0) has nothing smaller to fall back to, so
+// whenever its estimate dips (just after joining, or on a big scene change) it receives no video at all.
+// With reverseSimulcastLayers (on by default; --reverseSimulcastLayers=false or config.reverseSimulcastLayers = false
+// turns it off) the SFU gives mediasoup the encodings smallest first and maps the frontend's layer preference
+// (0 = High = full size) to match, so the frontend and Unreal behave as before.
+// Only offers with RTX are reordered. Without RTX (stock UE 5.8.3 drops it from the offer) the full-size layer never
+// becomes active and the smallest one carries libwebrtc's padding, so its score keeps dropping to 0 and back; first in
+// mediasoup's order, it would make viewers switch layers and stall. Epic's order is left alone there: mediasoup then
+// starts from the middle layer, the first active one.
+function reverseSimulcastLayers() {
+    return config.reverseSimulcastLayers !== false;
+}
+
+const reversedProducers = new Set();
+
+// The SDP bridge creates the streamer's producers itself, so reverse the video encodings on their way into
+// transport.produce().
+function reverseVideoEncodings(transport) {
+    const produce = transport.produce.bind(transport);
+    transport.produce = async (options) => {
+        const rtpParameters = options && options.rtpParameters;
+        const encodings = rtpParameters && rtpParameters.encodings;
+        const hasRtx = rtpParameters && (rtpParameters.codecs || []).some(c => /\/rtx$/i.test(c.mimeType));
+        let reversed = false;
+        if (options.kind === 'video' && Array.isArray(encodings) && encodings.length > 1) {
+            if (hasRtx) {
+                rtpParameters.encodings = [...encodings].reverse();
+                reversed = true;
+                console.log('Simulcast layers given to mediasoup smallest first: %s', rtpParameters.encodings.map(e => e.rid || e.ssrc).join(','));
+            } else {
+                console.log('Simulcast layers left in the streamer\'s order: the offer has no RTX');
+            }
+        }
+        const producer = await produce(options);
+        if (reversed) {
+            reversedProducers.add(producer.id);
+            producer.observer.once('close', () => reversedProducers.delete(producer.id));
+        }
+        return producer;
+    };
+}
+
+// The frontend's spatial layer (0 = full size) as mediasoup's index for this consumer.
+function toMediasoupSpatialLayer(consumer, spatialLayer) {
+    if (!reversedProducers.has(consumer.producerId) || consumer.kind !== 'video' || consumer.type !== 'simulcast' || !streamer) {
+        return spatialLayer;
+    }
+    const producer = streamer.producers.find(p => p.id === consumer.producerId);
+    const count = producer ? (producer.rtpParameters.encodings || []).length : 0;
+    return count > 1 ? Math.min(Math.max(count - 1 - spatialLayer, 0), count - 1) : spatialLayer;
+}
+
 let signalServer = null;
 let mediasoupRouter;
 let streamer = null;
@@ -216,6 +271,9 @@ async function onStreamerOffer(msg) {
     }
 
     const transport = await createWebRtcTransport("Streamer");
+    if (reverseSimulcastLayers()) {
+        reverseVideoEncodings(transport);
+    }
     const sdpEndpoint = mediasoupSdp.createSdpEndpoint(transport, mediasoupRouter.rtpCapabilities);
     const { producers, dataEnabled } = await sdpEndpoint.processOffer(msg.sdp, scalabilityMode);
     const multiplex = msg.multiplex;
@@ -445,7 +503,7 @@ function onLayerPreference(msg) {
     const peer = peers.get(`${msg.playerId}`);
     if (peer) {
         for (const consumer of peer.consumers) {
-            consumer.setPreferredLayers({ spatialLayer: msg.spatialLayer, temporalLayer: msg.temporalLayer });
+            consumer.setPreferredLayers({ spatialLayer: toMediasoupSpatialLayer(consumer, msg.spatialLayer), temporalLayer: msg.temporalLayer });
         }
     }
 }
@@ -560,6 +618,11 @@ async function main() {
     if ('signallingURL' in argv) {
         config.signallingURL = argv['signallingURL'];
     }
+
+    if ('reverseSimulcastLayers' in argv) {
+        config.reverseSimulcastLayers = String(argv['reverseSimulcastLayers']) !== 'false';
+    }
+    console.log('reverseSimulcastLayers: %s', reverseSimulcastLayers());
 
     console.log('Starting Mediasoup...');
     console.log("Config = ");
