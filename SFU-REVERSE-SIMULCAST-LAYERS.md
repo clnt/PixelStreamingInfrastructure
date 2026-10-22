@@ -65,6 +65,31 @@ first active, layer). So the SFU reorders only when the producer's codecs includ
 Unreal it keeps Epic's order and behaves exactly like Epic's SFU; with Unreal that keeps RTX (5.8.3 with the plugin
 change above, or 5.7.4) it reorders.
 
+## Capping one page at a lower layer (optional)
+
+Some pages may not need the full-size layer, for example an operator or controller page next to the pages customers
+watch. A page can cap itself with the frontend's own Preferred Quality setting, set once each connection is up:
+```ts
+import { OptionParameters } from '@epicgames-ps/lib-pixelstreamingfrontend-ue5.8';
+
+pixelStreaming.addEventListener('webRtcConnected', () => {
+    pixelStreaming.config.setOptionSettingValue(OptionParameters.PreferredQuality, 'Medium');
+});
+```
+- The frontend sends it to the SFU as a `layerPreference` message. mediasoup treats a consumer's preferred layer as a
+  **ceiling**: it uses that layer when the bandwidth allows and smaller ones when it doesn't, never a bigger one.
+- `High`, `Medium` and `Low` are the first, second and third layers. With `-PixelStreamingSimulcastLayers=1;1.5;2` on a
+  4K stream, `Medium` = 1440p (falling back to 1080p); on a 1440p stream it would be 960p.
+- Set it on **every** connection: the frontend resets Preferred Quality to `High` whenever it handles a new offer
+  (`WebRtcPlayerController.handleWebRtcOffer`). Until the handler runs, a new connection can briefly receive the full
+  layer.
+- **It needs the SFU change.** On Epic's unmodified SFU, mediasoup's layer 0 is the full-size layer, so the same
+  request targets the second layer but falls back to the **full** layer when bandwidth is short. With stock 5.8.3
+  Unreal (no RTX) the SFU keeps Epic's order too.
+- Other pages are unaffected, and Unreal keeps encoding every layer for them.
+
+Testing: a 20 min run and a 3 h run with one page capped at `Medium` among viewers on `High` are in progress; results
+will be added here.
 ## Tests
 
 Rig: RTX 3090, driver 610.88, Windows 11, UE 5.8.3 packaged Win64 Development, a 4K stream at 30 fps (H264), this SFU
